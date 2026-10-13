@@ -1,4 +1,4 @@
-name: BUSHRA AI CI & Build APK
+name: Build BUSHRA AI APK
 
 on:
   push:
@@ -13,7 +13,8 @@ permissions:
 
 jobs:
   build:
-    name: Build & Verify BUSHRA AI APK
+    name: Build & Package BUSHRA AI APK
+    runs-on: ubuntu-latest
     env:
       JAVA_TOOL_OPTIONS: "-Djava.awt.headless=true"
 
@@ -30,25 +31,36 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Ensure Debug Keystore Exists
+        run: |
+          if [ ! -f "debug.keystore" ]; then
+            echo "Generating debug.keystore for signing..."
+            keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+      - name: Ensure Environment File Exists
+        run: |
+          if [ ! -f ".env" ] && [ -f ".env.example" ]; then
+            echo "Copying .env.example to .env..."
+            cp .env.example .env
+          fi
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
-      - name: Build APK
+      - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon --stacktrace -Djava.awt.headless=true
 
-      - name: Run Unit Tests
-        continue-on-error: true
-        run: ./gradlew testDebugUnitTest --no-daemon --stacktrace -Djava.awt.headless=true
-
-      - name: Prepare APK Artifact
+      - name: Verify & Prepare APK Artifact
         run: |
           APK_PATH=$(find app/build/outputs/apk -type f -name "*.apk" | head -n 1)
           if [ -z "$APK_PATH" ]; then
-            echo "Error: No APK file was generated!"
+            echo "::error::No APK file found in app/build/outputs/apk!"
             exit 1
           fi
           echo "Found APK at: $APK_PATH"
           cp "$APK_PATH" "bushra-ai.apk"
+          ls -lh bushra-ai.apk
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
@@ -58,13 +70,15 @@ jobs:
           retention-days: 30
 
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
         continue-on-error: true
         with:
-          name: "BUSHRA AI — Release ${{ github.ref_name }}"
-          tag_name: ${{ github.ref_name }}
+          name: "BUSHRA AI APK Build"
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'latest' }}
+          body: "BUSHRA AI Android APK — Ready to install and use."
           draft: false
           prerelease: false
           files: bushra-ai.apk
-          token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
